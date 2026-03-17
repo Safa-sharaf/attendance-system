@@ -1,0 +1,285 @@
+{% extends 'attendance/base.html' %}
+{% load static %}
+
+{% block title %}Dashboard{% endblock %}
+
+{% block content %}
+<main>
+  <div class="page-title">Hello, {{ user_name }} 👋</div>
+  <div class="page-sub">Mark your attendance. GPS &amp; selfie required.</div>
+
+  <div class="grid">
+
+    <!-- Today's Status -->
+    <div class="card span-full">
+      <div class="card-label">Today's Status</div>
+      <div class="status-row">
+        <div class="status-badge {{ status }}" id="statusBadge">
+          <div class="sdot {{ status }}" id="statusDot"></div>
+          <span id="statusText">
+            {% if status == 'checked_in' %}Checked In
+            {% elif status == 'checked_out' %}Checked Out
+            {% else %}Not Checked In{% endif %}
+          </span>
+        </div>
+        <div class="time-display" id="timeDisplay">
+          {% if record and record.checkin_time %}
+            <strong>In:</strong> {{ record.checkin_time|time:"H:i" }}
+            {% if record.checkout_time %}
+              &nbsp;|&nbsp; <strong>Out:</strong> {{ record.checkout_time|time:"H:i" }}
+            {% endif %}
+          {% endif %}
+        </div>
+      </div>
+    </div>
+
+    <!-- GPS Distance -->
+    <div class="card">
+      <div class="card-label">Distance from Shop</div>
+      <div class="big-value" id="distanceVal">—<span class="unit"> m</span></div>
+      <div class="dist-bar-bg">
+        <div class="dist-bar-fill" id="distBar"></div>
+      </div>
+      <div class="coords" id="coordsDisplay">Fetching location...</div>
+      <div class="loc-status wait" id="locStatus">⏳ Waiting for GPS...</div>
+    </div>
+
+    <!-- Camera / Selfie -->
+    <div class="card">
+      <div class="card-label">Selfie Capture</div>
+      <div class="cam-wrap">
+        <video id="video" autoplay muted playsinline></video>
+        <canvas id="canvas"></canvas>
+        <img id="previewImg" alt="Selfie preview"/>
+        <div class="cam-overlay" id="camOverlay">
+          <span style="font-size:28px">📷</span>
+          <span>Camera not started</span>
+        </div>
+      </div>
+      <div class="cam-row">
+        <button class="cam-btn secondary" id="startCamBtn" onclick="startCamera()">Start Camera</button>
+        <button class="cam-btn capture" id="captureBtn" onclick="capturePhoto()" disabled>📸 Capture</button>
+      </div>
+      <button class="cam-btn secondary" id="retakeBtn" onclick="retakePhoto()" style="display:none; margin-top:8px">↩ Retake</button>
+    </div>
+
+    <!-- Check In / Check Out Buttons -->
+    <div class="card span-full">
+      <div class="card-label">Mark Attendance</div>
+      <div class="action-btns">
+        <button class="action-btn btn-checkin"  id="checkinBtn"  onclick="markAttendance('checkin')"  disabled>✅ Check In</button>
+        <button class="action-btn btn-checkout" id="checkoutBtn" onclick="markAttendance('checkout')" disabled>🚪 Check Out</button>
+      </div>
+    </div>
+
+  </div>
+
+  <a href="{% url 'history' %}" class="view-hist">📋 View Attendance History →</a>
+</main>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+var SHOP_LAT  = {{ shop_lat }};
+var SHOP_LNG  = {{ shop_lng }};
+var MAX_DIST  = {{ max_dist }};
+var USER_ID   = "{{ user_id }}";
+var USER_NAME = "{{ user_name }}";
+var CSRF      = "{{ csrf_token }}";
+
+var userLat      = null;
+var userLng      = null;
+var capturedBlob = null;
+var stream       = null;
+var todayStatus  = "{{ status }}";
+
+// ── Haversine Distance ──────────────────────────────────────────
+function haversine(la1, lo1, la2, lo2) {
+  var R  = 6371000;
+  var p1 = la1 * Math.PI / 180;
+  var p2 = la2 * Math.PI / 180;
+  var dp = (la2 - la1) * Math.PI / 180;
+  var dl = (lo2 - lo1) * Math.PI / 180;
+  var a  = Math.sin(dp/2) * Math.sin(dp/2) +
+           Math.cos(p1) * Math.cos(p2) *
+           Math.sin(dl/2) * Math.sin(dl/2);
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+// ── GPS ─────────────────────────────────────────────────────────
+function startGPS() {
+  if (!navigator.geolocation) {
+    document.getElementById('locStatus').textContent = '❌ Geolocation not supported';
+    return;
+  }
+  navigator.geolocation.watchPosition(
+    function(pos) {
+      userLat = pos.coords.latitude;
+      userLng = pos.coords.longitude;
+      var dist = haversine(userLat, userLng, SHOP_LAT, SHOP_LNG);
+      document.getElementById('distanceVal').innerHTML =
+        Math.round(dist) + '<span class="unit"> m</span>';
+      document.getElementById('coordsDisplay').textContent =
+        '📍 ' + userLat.toFixed(5) + ', ' + userLng.toFixed(5);
+      var bar = document.getElementById('distBar');
+      bar.style.width = Math.min((dist / MAX_DIST) * 100, 100) + '%';
+      bar.style.background = dist <= MAX_DIST ? 'var(--accent)' : 'var(--danger)';
+      var ls = document.getElementById('locStatus');
+      if (dist <= MAX_DIST) {
+        ls.textContent = '✅ Within range — you can mark attendance';
+        ls.className   = 'loc-status ok';
+      } else {
+        ls.textContent = '❌ You are not near the shop. Please move closer.';
+        ls.className   = 'loc-status far';
+      }
+      updateBtns();
+    },
+    function(err) {
+      document.getElementById('locStatus').textContent = '❌ ' + err.message;
+    },
+    { enableHighAccuracy: true }
+  );
+}
+
+// ── Camera ───────────────────────────────────────────────────────
+function startCamera() {
+  navigator.mediaDevices.getUserMedia({ video: true, audio: false })
+  .then(function(s) {
+    stream = s;
+    var video = document.getElementById('video');
+    video.srcObject = stream;
+    video.style.display = 'block';
+    document.getElementById('camOverlay').style.display = 'none';
+    document.getElementById('captureBtn').disabled = false;
+    document.getElementById('startCamBtn').disabled = true;
+  })
+  .catch(function(e) {
+    alert('Camera error: ' + e.message);
+  });
+}
+
+// ── Capture Photo ────────────────────────────────────────────────
+function capturePhoto() {
+  var video  = document.getElementById('video');
+  var canvas = document.getElementById('canvas');
+
+  // Set fixed size
+  canvas.width  = 640;
+  canvas.height = 480;
+  canvas.getContext('2d').drawImage(video, 0, 0, 640, 480);
+
+  // Use dataURL method — more reliable than toBlob
+  var dataURL = canvas.toDataURL('image/jpeg', 0.85);
+
+  // Convert dataURL to Blob manually
+  var arr   = dataURL.split(',');
+  var mime  = arr[0].match(/:(.*?);/)[1];
+  var bstr  = atob(arr[1]);
+  var n     = bstr.length;
+  var u8arr = new Uint8Array(n);
+  while (n--) { u8arr[n] = bstr.charCodeAt(n); }
+  capturedBlob = new Blob([u8arr], { type: mime });
+
+  // Show preview
+  var preview = document.getElementById('previewImg');
+  preview.src = dataURL;
+  preview.style.display = 'block';
+
+  video.style.display = 'none';
+  document.getElementById('captureBtn').style.display = 'none';
+  document.getElementById('retakeBtn').style.display  = 'block';
+  document.getElementById('camOverlay').style.display = 'none';
+
+  if (stream) stream.getTracks().forEach(function(t) { t.pause(); });
+
+  updateBtns();
+  showToast('Selfie captured! ✅', 'success');
+}
+
+// ── Retake Photo ─────────────────────────────────────────────────
+function retakePhoto() {
+  capturedBlob = null;
+  document.getElementById('previewImg').style.display = 'none';
+  document.getElementById('video').style.display      = 'block';
+  document.getElementById('captureBtn').style.display = 'block';
+  document.getElementById('retakeBtn').style.display  = 'none';
+  if (stream) stream.getTracks().forEach(function(t) { t.enabled = true; });
+  updateBtns();
+}
+
+// ── Enable / Disable Buttons ───────────────
+function updateBtns() {
+  var inRange = userLat !== null &&
+    haversine(userLat, userLng, SHOP_LAT, SHOP_LNG) <= MAX_DIST;
+  var ready = capturedBlob !== null && inRange;
+  document.getElementById('checkinBtn').disabled  =
+    !(ready && todayStatus === 'not_checked_in');
+  document.getElementById('checkoutBtn').disabled =
+    !(ready && todayStatus === 'checked_in');
+}
+
+// ── Mark Attendance ──────────────────────────────────────────────
+function markAttendance(action) {
+  if (!capturedBlob) { showToast('Please capture a selfie first.', 'warn'); return; }
+  if (!userLat)      { showToast('GPS not ready yet.', 'warn'); return; }
+
+  var btnId = action === 'checkin' ? 'checkinBtn' : 'checkoutBtn';
+  var btn   = document.getElementById(btnId);
+  var orig  = btn.innerHTML;
+  btn.innerHTML = 'Processing...';
+  btn.disabled  = true;
+
+  var fd = new FormData();
+  fd.append('user_id',             USER_ID);
+  fd.append('user_name',           USER_NAME);
+  fd.append('latitude',            userLat);
+  fd.append('longitude',           userLng);
+  fd.append('image',               capturedBlob, 'selfie.jpg');
+  fd.append('csrfmiddlewaretoken', CSRF);
+
+  fetch('/attendance/' + action + '/', { method: 'POST', body: fd })
+  .then(function(res) {
+    return res.json().then(function(data) {
+      return { ok: res.ok, data: data };
+    });
+  })
+  .then(function(r) {
+    if (!r.ok) throw new Error(r.data.error || 'Request failed');
+    showToast(r.data.message, 'success');
+    todayStatus = action === 'checkin' ? 'checked_in' : 'checked_out';
+    updateStatusUI(r.data, action);
+    retakePhoto();
+  })
+  .catch(function(e) {
+    showToast(e.message, 'error');
+    alert('Error: ' + e.message);
+  })
+  .finally(function() {
+    btn.innerHTML = orig;
+    updateBtns();
+  });
+}
+
+
+function updateStatusUI(data, action) {
+  var badge = document.getElementById('statusBadge');
+  var dot   = document.getElementById('statusDot');
+  var txt   = document.getElementById('statusText');
+  var tmd   = document.getElementById('timeDisplay');
+  if (action === 'checkin') {
+    badge.className = 'status-badge checked_in';
+    dot.className   = 'sdot checked_in';
+    txt.textContent = 'Checked In';
+    tmd.innerHTML   = '<strong>In:</strong> ' + data.checkin_time;
+  } else {
+    badge.className = 'status-badge checked_out';
+    dot.className   = 'sdot checked_out';
+    txt.textContent = 'Checked Out';
+    tmd.innerHTML   = tmd.innerHTML + ' &nbsp;|&nbsp; <strong>Out:</strong> ' + data.checkout_time;
+  }
+}
+
+// ── Start GPS on page load ───────────────────────────────────────
+startGPS();
+</script>
+{% endblock %}

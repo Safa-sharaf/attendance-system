@@ -1,0 +1,39 @@
+{% extends 'attendance/base.html' %}
+{% load static %}
+
+{% block title %}Login{% endblock %}
+{% block body_class %}login-page{% endblock %}
+
+{% block content %}
+<div class="orb orb-1"></div>
+<div class="orb orb-2"></div>
+
+<div class="login-card">
+  <div class="logo-wrap">
+    <div class="logo-icon">📍</div>
+    <div class="logo-text">Attend<span>IQ</span></div>
+  </div>
+
+  <div class="badge"><div class="dot"></div> GPS-Verified Attendance</div>
+
+  <h1>Welcome back</h1>
+  <p class="subtitle">Sign in to mark your attendance at the shop location.</p>
+
+  <form method="POST" action="{% url 'login' %}">
+    {% csrf_token %}
+    <div class="field">
+      <label>Employee ID</label>
+      <input type="text" name="user_id" placeholder="e.g. EMP001" required autocomplete="off"/>
+    </div>
+    <div class="field">
+      <label>Full Name</label>
+      <input type="text" name="user_name" placeholder="e.g. Rahul Menon" required autocomplete="off"/>
+    </div>
+    <button type="submit" class="submit-btn">Continue to Dashboard →</button>
+
+    {% if error %}
+      <div class="error-msg">{{ error }}</div>
+    {% endif %}
+  </form>
+</div>
+{% endblock %}

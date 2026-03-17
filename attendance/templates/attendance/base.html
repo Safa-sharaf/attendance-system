@@ -1,0 +1,41 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>AttendIQ – {% block title %}{% endblock %}</title>
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet"/>
+  <link rel="stylesheet" href="{% static 'css/style.css' %}"/>
+</head>
+<body class="{% block body_class %}{% endblock %}">
+
+  {% if request.session.user_id %}
+  <nav>
+    <a href="{% url 'dashboard' %}" class="nav-logo">Attend<span>IQ</span></a>
+    <div class="nav-right">
+      <div class="avatar">{{ request.session.user_name|first|upper }}</div>
+      <span class="nav-user-name">{{ request.session.user_name }}</span>
+      <a href="{% url 'history' %}"  class="nav-btn">📋 History</a>
+      <a href="{% url 'logout' %}"   class="nav-btn danger">Sign out</a>
+    </div>
+  </nav>
+  {% endif %}
+
+  {% block content %}{% endblock %}
+
+  <div id="toast"></div>
+
+  <script>
+    function showToast(msg, type = 'success') {
+      const t = document.getElementById('toast');
+      t.textContent = msg;
+      t.className = 'show ' + type;
+      clearTimeout(window._tt);
+      window._tt = setTimeout(() => { t.className = type; }, 3500);
+    }
+  </script>
+
+  {% block extra_js %}{% endblock %}
+</body>
+</html>
