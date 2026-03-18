@@ -1,4 +1,5 @@
 import math
+import os
 from datetime import date
 
 from django.conf import settings
@@ -8,8 +9,11 @@ from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST, require_GET
 
-from .models import Attendance
+from .models import Attendance, Employee
+from .face_utils import compare_faces
 
+
+# ── Helper ──────────────────────────────────────────────────────
 
 def haversine(lat1, lon1, lat2, lon2):
     R  = 6371000
@@ -25,17 +29,67 @@ def get_today_record(user_id):
     return Attendance.objects.filter(user_id=user_id, date=date.today()).first()
 
 
+# ── Page Views ───────────────────────────────────────────────────
+
 def login_view(request):
     if request.method == 'POST':
         user_id   = request.POST.get('user_id', '').strip()
         user_name = request.POST.get('user_name', '').strip()
+
         if not user_id or not user_name:
             return render(request, 'attendance/login.html',
                           {'error': 'Please fill in both fields.'})
+
+        # Check if employee is registered
+        try:
+            employee = Employee.objects.get(user_id=user_id)
+            if employee.user_name.lower() != user_name.lower():
+                return render(request, 'attendance/login.html',
+                              {'error': 'Name does not match our records.'})
+        except Employee.DoesNotExist:
+            return render(request, 'attendance/login.html',
+                          {'error': 'Employee not registered. Please contact admin.',
+                           'show_register': True})
+
         request.session['user_id']   = user_id
         request.session['user_name'] = user_name
         return redirect('dashboard')
+
     return render(request, 'attendance/login.html')
+
+
+def register_view(request):
+    """Employee registration with face photo."""
+    if request.method == 'POST':
+        user_id   = request.POST.get('user_id', '').strip()
+        user_name = request.POST.get('user_name', '').strip()
+        email     = request.POST.get('email', '').strip()
+        face_img  = request.FILES.get('face_image')
+
+        if not user_id or not user_name or not email or not face_img:
+            return render(request, 'attendance/register.html',
+                          {'error': 'All fields are required.'})
+
+        # Check duplicate
+        if Employee.objects.filter(user_id=user_id).exists():
+            return render(request, 'attendance/register.html',
+                          {'error': 'Employee ID already registered.'})
+
+        if Employee.objects.filter(email=email).exists():
+            return render(request, 'attendance/register.html',
+                          {'error': 'Email already registered.'})
+
+        Employee.objects.create(
+            user_id    = user_id,
+            user_name  = user_name,
+            email      = email,
+            face_image = face_img,
+        )
+
+        return render(request, 'attendance/register.html',
+                      {'success': f'Employee {user_name} registered successfully! You can now login.'})
+
+    return render(request, 'attendance/register.html')
 
 
 def dashboard_view(request):
@@ -75,7 +129,6 @@ def history_view(request):
     total     = records.count()
     completed = records.filter(checkout_time__isnull=False).count()
 
-    # Format times in Python to avoid timezone template errors
     records_data = []
     for r in records:
         records_data.append({
@@ -88,6 +141,7 @@ def history_view(request):
             'checkin_image_url':  r.checkin_image.url if r.checkin_image else None,
             'checkout_image_url': r.checkout_image.url if r.checkout_image else None,
             'duration':           r.duration,
+            'face_verified':      r.face_verified,
         })
 
     return render(request, 'attendance/history.html', {
@@ -105,6 +159,8 @@ def logout_view(request):
     return redirect('login')
 
 
+# ── API Views ────────────────────────────────────────────────────
+
 @csrf_exempt
 @require_POST
 def checkin_view(request):
@@ -121,17 +177,46 @@ def checkin_view(request):
     if not user_id or not user_name or not image:
         return JsonResponse({'success': False, 'error': 'Missing required fields.'}, status=400)
 
+    # GPS distance check
     distance = haversine(lat, lng, settings.SHOP_LATITUDE, settings.SHOP_LONGITUDE)
     if distance > settings.MAX_DISTANCE_METERS:
         return JsonResponse({
             'success': False,
-            'error': 'You are not near the shop. Please move closer. (Distance: ' + str(round(distance, 1)) + 'm)'
+            'error': f'You are not near the shop. Please move closer. (Distance: {distance:.1f}m)'
         }, status=400)
 
+    # Duplicate check
     today = date.today()
     if Attendance.objects.filter(user_id=user_id, date=today).exists():
         return JsonResponse({'success': False, 'error': 'You have already checked in today.'}, status=400)
 
+    # ── Face Verification ──
+    try:
+        employee = Employee.objects.get(user_id=user_id)
+        registered_image_path = os.path.join(settings.MEDIA_ROOT, str(employee.face_image))
+
+        # Read selfie bytes
+        selfie_bytes = image.read()
+        image.seek(0)  # Reset file pointer after reading
+
+        face_match, confidence, face_message = compare_faces(
+            registered_image_path,
+            selfie_bytes
+        )
+
+        if not face_match:
+            return JsonResponse({
+                'success': False,
+                'error': f'Face verification failed! {face_message}'
+            }, status=400)
+
+    except Employee.DoesNotExist:
+        return JsonResponse({
+            'success': False,
+            'error': 'Employee not registered. Please contact admin.'
+        }, status=400)
+
+    # Save record
     now = timezone.now()
     record = Attendance.objects.create(
         user_id       = user_id,
@@ -141,14 +226,16 @@ def checkin_view(request):
         checkin_lat   = lat,
         checkin_lng   = lng,
         checkin_image = image,
+        face_verified = True,
     )
 
     return JsonResponse({
         'success':      True,
-        'message':      'Check-in successful!',
+        'message':      f'Check-in successful! Face verified ({confidence}% match)',
         'record_id':    record.id,
         'checkin_time': now.strftime('%H:%M:%S'),
         'distance':     round(distance, 2),
+        'confidence':   confidence,
     })
 
 
@@ -167,6 +254,7 @@ def checkout_view(request):
     if not user_id or not image:
         return JsonResponse({'success': False, 'error': 'Missing required fields.'}, status=400)
 
+    # GPS check
     distance = haversine(lat, lng, settings.SHOP_LATITUDE, settings.SHOP_LONGITUDE)
     if distance > settings.MAX_DISTANCE_METERS:
         return JsonResponse({
@@ -174,6 +262,32 @@ def checkout_view(request):
             'error': 'You are not near the shop. Please move closer.'
         }, status=400)
 
+    # ── Face Verification ──
+    try:
+        employee = Employee.objects.get(user_id=user_id)
+        registered_image_path = os.path.join(settings.MEDIA_ROOT, str(employee.face_image))
+
+        selfie_bytes = image.read()
+        image.seek(0)
+
+        face_match, confidence, face_message = compare_faces(
+            registered_image_path,
+            selfie_bytes
+        )
+
+        if not face_match:
+            return JsonResponse({
+                'success': False,
+                'error': f'Face verification failed! {face_message}'
+            }, status=400)
+
+    except Employee.DoesNotExist:
+        return JsonResponse({
+            'success': False,
+            'error': 'Employee not registered.'
+        }, status=400)
+
+    # Find today's active check-in
     record = Attendance.objects.filter(
         user_id=user_id,
         date=date.today(),
@@ -182,20 +296,25 @@ def checkout_view(request):
     ).first()
 
     if not record:
-        return JsonResponse({'success': False, 'error': 'No active check-in found. Please check in first.'}, status=400)
+        return JsonResponse({
+            'success': False,
+            'error': 'No active check-in found. Please check in first.'
+        }, status=400)
 
     now = timezone.now()
     record.checkout_time  = now
     record.checkout_lat   = lat
     record.checkout_lng   = lng
     record.checkout_image = image
+    record.face_verified  = True
     record.save()
 
     return JsonResponse({
         'success':       True,
-        'message':       'Check-out successful!',
+        'message':       f'Check-out successful! Face verified ({confidence}% match)',
         'checkout_time': now.strftime('%H:%M:%S'),
         'distance':      round(distance, 2),
+        'confidence':    confidence,
     })
 
 
@@ -226,5 +345,6 @@ def user_records_view(request, user_id):
             'checkin_image_url': r.checkin_image.url  if r.checkin_image  else None,
             'checkout_image_url':r.checkout_image.url if r.checkout_image else None,
             'duration':          r.duration,
+            'face_verified':     r.face_verified,
         })
     return JsonResponse({'user_id': user_id, 'total': len(data), 'records': data})

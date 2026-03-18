@@ -1,0 +1,149 @@
+{% extends 'attendance/base.html' %}
+{% load static %}
+
+{% block title %}Register Employee{% endblock %}
+{% block body_class %}login-page{% endblock %}
+
+{% block content %}
+<div class="orb orb-1"></div>
+<div class="orb orb-2"></div>
+
+<div class="login-card" style="max-width:480px">
+  <div class="logo-wrap">
+    <div class="logo-icon">👤</div>
+    <div class="logo-text">Attend<span>IQ</span></div>
+  </div>
+
+  <div class="badge"><div class="dot"></div> Employee Registration</div>
+
+  <h1>Register Employee</h1>
+  <p class="subtitle">Add employee details and face photo for verification.</p>
+
+  {% if success %}
+    <div style="background:rgba(0,229,160,0.1);border:1px solid rgba(0,229,160,0.3);color:var(--accent);padding:14px;border-radius:12px;margin-bottom:20px;font-size:14px;">
+      ✅ {{ success }}
+    </div>
+  {% endif %}
+
+  {% if error %}
+    <div class="error-msg" style="display:block">{{ error }}</div>
+  {% endif %}
+
+  <form method="POST" enctype="multipart/form-data" action="{% url 'register' %}">
+    {% csrf_token %}
+
+    <div class="field">
+      <label>Employee ID</label>
+      <input type="text" name="user_id" placeholder="e.g. EMP001" required autocomplete="off"/>
+    </div>
+
+    <div class="field">
+      <label>Full Name</label>
+      <input type="text" name="user_name" placeholder="e.g. Rahul Menon" required autocomplete="off"/>
+    </div>
+
+    <div class="field">
+      <label>Email Address</label>
+      <input type="email" name="email" placeholder="e.g. rahul@company.com" required autocomplete="off"/>
+    </div>
+
+    <div class="field">
+      <label>Face Photo</label>
+      <div style="border:1px solid var(--border);border-radius:12px;overflow:hidden;margin-bottom:8px;">
+
+        <!-- Camera capture option -->
+        <div style="padding:16px;">
+          <div class="cam-wrap" style="aspect-ratio:4/3;margin-bottom:10px;">
+            <video id="regVideo" autoplay muted playsinline style="width:100%;height:100%;object-fit:cover;display:none;"></video>
+            <canvas id="regCanvas" style="display:none;"></canvas>
+            <img id="regPreview" style="width:100%;height:100%;object-fit:cover;display:none;" alt="Face preview"/>
+            <div id="regOverlay" style="width:100%;height:100%;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;flex-direction:column;gap:8px;color:var(--muted);">
+              <span style="font-size:32px">📷</span>
+              <span style="font-size:13px">Take photo or upload below</span>
+            </div>
+          </div>
+
+          <div style="display:flex;gap:8px;margin-bottom:8px;">
+            <button type="button" class="cam-btn secondary" id="regStartBtn" onclick="startRegCamera()" style="flex:1">📷 Open Camera</button>
+            <button type="button" class="cam-btn capture" id="regCaptureBtn" onclick="captureRegPhoto()" disabled style="flex:1">📸 Capture</button>
+          </div>
+          <button type="button" class="cam-btn secondary" id="regRetakeBtn" onclick="retakeRegPhoto()" style="display:none;width:100%;margin-bottom:8px;">↩ Retake</button>
+        </div>
+
+        <!-- OR upload file -->
+        <div style="border-top:1px solid var(--border);padding:12px;text-align:center;color:var(--muted);font-size:12px;">OR upload from file</div>
+        <div style="padding:0 16px 16px;">
+          <input type="file" name="face_image" id="faceImageInput" accept="image/*"
+                 style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px;color:var(--text);font-size:13px;"/>
+        </div>
+
+      </div>
+      <!-- Hidden input for camera captured image -->
+      <input type="hidden" name="face_image_data" id="faceImageData"/>
+    </div>
+
+    <button type="submit" class="submit-btn">Register Employee →</button>
+  </form>
+
+  <div style="text-align:center;margin-top:16px;">
+    <a href="{% url 'login' %}" style="color:var(--muted);font-size:13px;text-decoration:none;">← Back to Login</a>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+var regStream = null;
+
+function startRegCamera() {
+  navigator.mediaDevices.getUserMedia({ video: true, audio: false })
+  .then(function(s) {
+    regStream = s;
+    var video = document.getElementById('regVideo');
+    video.srcObject = regStream;
+    video.style.display = 'block';
+    document.getElementById('regOverlay').style.display = 'none';
+    document.getElementById('regCaptureBtn').disabled = false;
+    document.getElementById('regStartBtn').disabled = true;
+  })
+  .catch(function(e) {
+    alert('Camera error: ' + e.message);
+  });
+}
+
+function captureRegPhoto() {
+  var video  = document.getElementById('regVideo');
+  var canvas = document.getElementById('regCanvas');
+  canvas.width  = 640;
+  canvas.height = 480;
+  canvas.getContext('2d').drawImage(video, 0, 0, 640, 480);
+  var dataURL = canvas.toDataURL('image/jpeg', 0.85);
+
+  var preview = document.getElementById('regPreview');
+  preview.src = dataURL;
+  preview.style.display = 'block';
+  video.style.display = 'none';
+  document.getElementById('regOverlay').style.display = 'none';
+  document.getElementById('regCaptureBtn').style.display = 'none';
+  document.getElementById('regRetakeBtn').style.display = 'block';
+  if (regStream) regStream.getTracks().forEach(function(t) { t.pause(); });
+
+  // Convert to file and set in file input
+  canvas.toBlob(function(blob) {
+    var file = new File([blob], 'face.jpg', { type: 'image/jpeg' });
+    var dt = new DataTransfer();
+    dt.items.add(file);
+    document.getElementById('faceImageInput').files = dt.files;
+  }, 'image/jpeg', 0.85);
+}
+
+function retakeRegPhoto() {
+  document.getElementById('regPreview').style.display = 'none';
+  document.getElementById('regVideo').style.display = 'block';
+  document.getElementById('regCaptureBtn').style.display = 'block';
+  document.getElementById('regCaptureBtn').disabled = false;
+  document.getElementById('regRetakeBtn').style.display = 'none';
+  if (regStream) regStream.getTracks().forEach(function(t) { t.enabled = true; });
+}
+</script>
+{% endblock %}

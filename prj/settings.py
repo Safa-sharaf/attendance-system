@@ -130,6 +130,6 @@ MEDIA_ROOT = BASE_DIR / 'media'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # ── Shop Location ───────────────────────────────────────────────
-SHOP_LATITUDE       = 10.97820
-SHOP_LONGITUDE      = 76.20370
+SHOP_LATITUDE       = 11.29700
+SHOP_LONGITUDE      = 75.81620
 MAX_DISTANCE_METERS = 100

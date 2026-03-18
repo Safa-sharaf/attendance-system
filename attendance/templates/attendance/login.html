@@ -14,10 +14,10 @@
     <div class="logo-text">Attend<span>IQ</span></div>
   </div>
 
-  <div class="badge"><div class="dot"></div> GPS-Verified Attendance</div>
+  <div class="badge"><div class="dot"></div> GPS + Face Verified Attendance</div>
 
   <h1>Welcome back</h1>
-  <p class="subtitle">Sign in to mark your attendance at the shop location.</p>
+  <p class="subtitle">Sign in to mark your attendance. Your face will be verified.</p>
 
   <form method="POST" action="{% url 'login' %}">
     {% csrf_token %}
@@ -32,8 +32,13 @@
     <button type="submit" class="submit-btn">Continue to Dashboard →</button>
 
     {% if error %}
-      <div class="error-msg">{{ error }}</div>
+      <div class="error-msg" style="display:block">{{ error }}</div>
     {% endif %}
   </form>
+
+  <div style="text-align:center;margin-top:20px;color:var(--muted);font-size:13px;">
+    Not registered yet?
+    <a href="{% url 'register' %}" style="color:var(--accent);text-decoration:none;font-weight:600;">Register here →</a>
+  </div>
 </div>
 {% endblock %}
